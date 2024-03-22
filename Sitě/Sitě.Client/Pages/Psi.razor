@@ -1,37 +1,49 @@
 ﻿@page "/psi"
 @rendermode InteractiveAuto
+
 <h3>Subnet Calculator</h3>
+<p>Zadejte minimální počet hostů, který musí podsíť pojmout.</p>
+<div class="container">
+    <div class="input-section">
+        <button @onclick="AddInput" class="calculate-btn">Add Input</button>
+        <br />
 
-<button @onclick="AddInput" class="calculate-btn">Přidat vstup</button>
-
-@foreach (var (value, index) in inputValues.Select((value, index) => (value, index)))
-{
-    <div>
-        <input @bind="inputValues[index]" />
-        <button @onclick="() => RemoveInput(index)" class="calculate-btn">Odstranit</button>
-    </div>
-}
-
-<button class="calculate-btn" @onclick="Calculate">Vypočítat</button>
-
-@if (resultsList != null)
-{
-    <div class="results">
-        <h4>Výsledky výpočtu:</h4>
-        @foreach (var result in resultsList)
+        @foreach (var (value, index) in inputValues.Select((value, index) => (value, index)))
         {
-            <div>
-                <p><strong>Rozsah sítě:</strong> @result.NetworkRange</p>
-                <p><strong>První host:</strong> @result.FirstHost</p>
-                <p><strong>Poslední host:</strong> @result.LastHost</p>
-                <p><strong>Broadcast adresa:</strong> @result.BroadcastAddress</p>
-                <p><strong>Maska sítě:</strong> @result.SubnetMask</p>
-                <p>--------</p>
+            <div class="input-container">
+                <input  @bind="inputValues[index]" type="number"  />
+                <button @onclick="() => RemoveInput(index)" class="calculate-btn">Remove</button>
             </div>
         }
-    </div>
-}
 
+        <button class="calculate-btn" @onclick="() => {Calculate();}">Calculate</button>
+        <button class="calculate-btn" @onclick="Reset">Reset</button>
+    </div>
+
+    @if (resultsList != null)
+    {
+        <div class="results">
+            <h4>Calculation Results:</h4>
+            @foreach (var result in resultsList)
+            {
+                <div class="subnet-result">
+                    <div class="subnet-info">
+                        <p><strong>Network Range:</strong></p>
+                        <p>@result.NetworkRange</p>
+                        <p><strong>First Host:</strong></p>
+                        <p>@result.FirstHost</p>
+                        <p><strong>Last Host:</strong></p>
+                        <p>@result.LastHost</p>
+                        <p><strong>Broadcast Address:</strong></p>
+                        <p>@result.BroadcastAddress</p>
+                        <p><strong>Subnet Mask:</strong></p>
+                        <p>@result.SubnetMask</p>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
 
 
 @code{
@@ -44,7 +56,7 @@
 
     void AddInput()
     {
-        inputValues.Add(null); // Přidáme null pro nový vstup
+        inputValues.Add(null);
     }
 
     void RemoveInput(int index)
@@ -61,11 +73,16 @@
         public string SubnetMask { get; set; }
         public string NumberSubnets { get; set; }
     }
+    private int lastAssignedIp = -1; // This will keep track of the last assigned IP address as an integer offset.
+
     private void Calculate()
     {
         resultsList.Clear();
-        var sortedInputs = inputValues.OrderByDescending(val => val).ToList();
-        foreach (var hosts in sortedInputs)
+        var indexedInputs = inputValues.Select((value, index) => (value, index)).ToList();
+        var sortedInputs = indexedInputs.OrderByDescending(pair => pair.value).ToList();
+        var tempResults = new List<(CalculationResult result, int originalIndex)>();
+
+        foreach (var (hosts, originalIndex) in sortedInputs)
         {
             int requiredHosts = hosts.HasValue ? hosts.Value + 2 : 0;
 
@@ -75,27 +92,40 @@
             SubnetData matchingSubnet = subnetData.FirstOrDefault(subnet => subnet.PrefixLength == networkPrefix);
 
             string subnetMask = matchingSubnet != null ? matchingSubnet.SubnetMask : "N/A";
-            int maxHosts = (int)Math.Pow(2, 32 - networkPrefix) - 2;
+            int maxHosts = (int)Math.Pow(2, 32 - networkPrefix) - 1;
 
-            string networkAddress = $"192.0.2./{networkPrefix}";
+            // Calculate the next network address based on the last assigned IP.
+            int nextNetworkIp = lastAssignedIp + 1; // Increment to get to the next network.
+            lastAssignedIp += maxHosts + 1; // Update lastAssignedIp to the last usable IP in this subnet.
 
-            string firstHost = $"{networkAddress.Substring(0, networkAddress.IndexOf('/')) + 1}/{networkPrefix}";
-            string lastHost = $"{networkAddress.Substring(0, networkAddress.IndexOf('/')) + (maxHosts)}/{networkPrefix}"; // Poslední host
-            string broadcastAddress = $"192.0.2.{maxHosts+1}/{networkPrefix}";
+            // Construct the network address string.
+            string networkAddress = $"192.0.2.{nextNetworkIp}/{networkPrefix}";
+            string firstHost = $"192.0.2.{nextNetworkIp + 1}/{networkPrefix}";
+            string lastHost = $"192.0.2.{lastAssignedIp - 1}/{networkPrefix}";
+            string broadcastAddress = $"192.0.2.{lastAssignedIp}/{networkPrefix}";
 
             var subnetResult = new CalculationResult
+                {
+                    NetworkRange = networkAddress,
+                    BroadcastAddress = broadcastAddress,
+                    FirstHost = firstHost,
+                    LastHost = lastHost,
+                    SubnetMask = subnetMask
+                };
+            if (networkPrefix !> 8)
             {
-                NetworkRange = networkAddress,
-                BroadcastAddress = broadcastAddress,
-                FirstHost = firstHost,
-                LastHost = lastHost,
-                SubnetMask = subnetMask
-            };
-            resultsList.Add(subnetResult);
+                tempResults.Add((subnetResult, originalIndex));
+            }
         }
+        var orderedResults = tempResults.OrderBy(item => item.originalIndex).Select(item => item.result).ToList();
+        resultsList = orderedResults;
     }
-
-
+    private void Reset()
+    {
+        inputValues.Clear(); 
+        lastAssignedIp = -1; 
+        resultsList.Clear(); 
+    }
 
     public class SubnetData
     {
@@ -119,9 +149,13 @@
             };
 }
 <style>
-    .input-group {
-        margin-bottom: 15px;
+
+    .container {
+        position: absolute;
+        flex-direction: row;
     }
+
+    
 
         .input-group label {
             display: block;
@@ -129,8 +163,6 @@
         }
 
         .input-group input {
-            width: 200px;
-            padding: 5px;
             border: 1px solid #ccc;
             border-radius: 3px;
         }
@@ -142,21 +174,55 @@
         border: none;
         border-radius: 3px;
         cursor: pointer;
+        margin: 0.2em;
+    }
+
+   .container {
+        display: flex;
+        flex-direction: row;
+    }
+
+    .input-section {
+        flex: 1;
+    }
+
+    .input-container {
+        
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .input-container input {
+        margin-right: 8px;
+    }
+
+    .calculate-btn {
+        margin-right: 8px;
     }
 
     .results {
-        margin-top: 20px;
-        padding: 10px;
-        border: 1px solid #ccc;
-        border-radius: 3px;
-        background-color: #f9f9f9;
+        margin-left: 16px;
+        flex: 1;
     }
 
-        .results p {
-            margin: 5px 0;
-        }
+    .subnet-result {
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        padding: 12px;
+        margin-bottom: 16px;
+    }
 
-            .results p strong {
-                font-weight: bold;
-            }
+    .subnet-info {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+
+    .subnet-info p {
+        margin: 0;
+    }
+
+    .subnet-info p strong {
+        font-weight: bold;
+    }
 </style>
